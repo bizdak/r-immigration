@@ -1,0 +1,138 @@
+---
+title: "Study Visas"
+output: pdf_document
+---
+
+Analyse student visa dataset provided by Immigration New Zealand.
+
+```{r, message=FALSE, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(psych)
+library(reshape2)
+library(knitr)
+library(zoo)
+library(scales)
+```
+
+```{r}
+study.df <- read.csv('S7 - First-time students (data).csv', sep=',', header=T)
+
+# fix up datatypes
+#fy.date <- function(dt) {
+#  lapply(as.numeric(strsplit(dt, '/')[[1]]))
+#}
+
+# FY.XXX is of the form LastYear/CurrentYear, e.g. 2014/15.  We'll use the first part: 2014
+#study.df$FY.Decided <- sapply(as.character(study.df$FY.Decided), fy.date)
+#study.df$FY.Resident.Decision <- sapply(as.character(study.df$FY.Resident.Decision), fy.date)
+#study.df$FY.Work.Decision <- sapply(as.character(study.df$FY.Work.Decision), fy.date)
+
+study.df$Month.Decision <- as.Date(paste(study.df$Month.Decision, "-01", sep=""), "%Y-%m-%d")
+
+str(study.df)
+kable(head(study.df), digits=2, caption='First-time students')
+```
+
+## Number of First Students Over Time
+
+```{r}
+by_nationality <- study.df %>% 
+  group_by(Nationality.Top.10, FY.Decided, Decision.Type) %>% 
+  summarise(decision=sum(Number.of.Clients)) %>%
+  filter(Nationality.Top.10 != 'Other nationalities') %>%
+  data.frame
+  
+# reorder factor by top country
+nationality_order <- by_nationality %>% group_by(Nationality.Top.10) %>% summarise(decision=sum(decision)) %>% arrange(desc(decision))
+by_nationality$Nationality.Top.10 <- factor(by_nationality$Nationality.Top.10, levels=nationality_order$Nationality.Top.10)
+
+#plot it
+ggplot(by_nationality, aes(x=FY.Decided, y=decision, colour=Decision.Type)) + geom_point() +
+  facet_wrap(~Nationality.Top.10, ncol=5) +
+  scale_y_continuous(minor_breaks=seq(0, 3000, 50), breaks=seq(0, 3000, 500)) + 
+  ggtitle("Top 10 By Nationality") +
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+```
+
+## Market Share
+
+```{r}
+total <- sum(study.df$Number.of.Clients)
+by_nationality <- study.df %>% 
+  group_by(Nationality.Top.10) %>% 
+  summarise(decision=n()) %>%
+  mutate(Market.Share=decision/total) %>%
+  data.frame
+# reorder factor by top country
+by_nationality$Nationality.Top.10 <- factor(by_nationality$Nationality.Top.10, levels=arrange(by_nationality, Market.Share)$Nationality.Top.10)
+
+# plot it
+ggplot(by_nationality, aes(x=Nationality.Top.10, y=Market.Share * 100)) + geom_bar(stat='identity') + 
+  scale_y_continuous(breaks=seq(0, 100, 5)) + coord_flip() 
+
+```
+
+## Phlippine Market
+```{r}
+phil.df <- study.df %>% filter(Nationality == 'Philippines', Application.Criteria == 'Full fee paying')
+phil.df.2 <- phil.df %>% group_by(Month.Decision, Agent.Type) %>%
+  summarise(Number.of.Clients=sum(Number.of.Clients))
+ggplot(phil.df.2, aes(x=Month.Decision, y=Number.of.Clients)) + geom_bar(stat='identity', aes(fill=Agent.Type)) +
+  scale_x_date(labels=date_format("%b %Y")) + #, breaks="3 months", minor_breaks="1 month") +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Philippine Students")
+
+ggplot(phil.df.2, aes(x=Month.Decision, y=Number.of.Clients)) + geom_bar(stat='identity', aes(fill=Agent.Type))
+
+phil.df <- study.df %>% filter(Nationality == 'Philippines')
+phil.df.2 <- phil.df %>% group_by(Month.Decision, Application.Criteria) %>%
+  summarise(Number.of.Clients=sum(Number.of.Clients))
+ggplot(phil.df.2, aes(x=Month.Decision, y=Number.of.Clients)) + 
+  geom_bar(stat='identity', aes(fill=Application.Criteria)) +
+  scale_x_date(labels=date_format("%b %Y")) + #, breaks="3 months", minor_breaks="1 month") +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Philippine Students")
+```
+
+```{r}
+advisers.df <- study.df %>% filter(Nationality == c('Philippines', 'China', 'India'), Application.Criteria == 'Full fee paying')
+country.totals <- group_by(advisers.df, Month.Decision, Nationality) %>% summarise(total=sum(Number.of.Clients))
+advisers.df <- left_join(advisers.df, country.totals, by=c("Nationality"="Nationality", "Month.Decision"="Month.Decision"))
+advisers.df.2 <- advisers.df %>% group_by(Month.Decision, Agent.Type, Nationality, total) %>%
+  summarise(Number.of.Clients=sum(Number.of.Clients))
+
+advisers.df.2 <- mutate(advisers.df.2, Pct=Number.of.Clients/total * 100)
+ggplot(advisers.df.2, aes(x=Month.Decision, y=Pct)) + geom_bar(stat='identity', aes(fill=Agent.Type)) +
+  scale_x_date(labels=date_format("%b %Y")) + #, breaks="3 months", minor_breaks="1 month") +
+  scale_y_continuous() +
+  facet_grid(Nationality~.) +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + ggtitle("Adviser Type")
+```
+
+### By Agent Type - Work Visa Approved
+```{r}
+phil.df <- study.df %>% filter(Nationality == 'Philippines', Application.Criteria == 'Full fee paying')
+work.approved.df <- phil.df %>% group_by(Month.Decision, Work.Approved.) %>%
+  summarise(Number.of.Clients=sum(Number.of.Clients))
+ggplot(work.approved.df, aes(x=Month.Decision, y=Number.of.Clients)) + 
+  geom_bar(stat='identity', aes(fill=Work.Approved.)) +
+  scale_x_date(labels=date_format("%b %Y")) + #, breaks="3 months", minor_breaks="1 month") +
+  geom_smooth() +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Philippine Students - Work Visa Approval")
+```
+
+### By Agent Type - Residency Approved
+```{r}
+residency.approved.df <- phil.df %>% group_by(Month.Decision, Resident.Approved.) %>%
+  summarise(Number.of.Clients=sum(Number.of.Clients))
+ggplot(residency.approved.df, aes(x=Month.Decision, y=Number.of.Clients)) + 
+  geom_bar(stat='identity', aes(fill=Resident.Approved.)) +
+  scale_x_date(labels=date_format("%b %Y")) + #, breaks="3 months", minor_breaks="1 month") +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggtitle("Philippine Students - Residence Visa Approval")
+```
+
+```{r}
+table(study.df$Decision.Type)
+ggplot(study.df, aes(x=Application.Criteria)) + geom_bar() + coord_flip()
+```
